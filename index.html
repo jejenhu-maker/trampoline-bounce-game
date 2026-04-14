@@ -1,0 +1,912 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Trampoline Bounce</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  background: #111;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  height: 100vh;
+  overflow: hidden;
+  font-family: 'Segoe UI', sans-serif;
+  touch-action: none;
+}
+canvas {
+  border: 2px solid #333;
+  image-rendering: pixelated;
+}
+#ui-overlay {
+  position: absolute;
+  top: 0; left: 0; right: 0; bottom: 0;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  pointer-events: none;
+  z-index: 10;
+}
+#ui-overlay.active { pointer-events: all; }
+#ui-panel {
+  background: rgba(0,0,0,0.85);
+  border: 2px solid #0ff;
+  border-radius: 16px;
+  padding: 40px;
+  text-align: center;
+  color: #fff;
+  display: none;
+}
+#ui-panel h1 { font-size: 32px; margin-bottom: 12px; }
+#ui-panel p { font-size: 18px; margin-bottom: 24px; color: #aaa; }
+#ui-panel button {
+  background: #0ff;
+  color: #111;
+  border: none;
+  padding: 14px 40px;
+  font-size: 20px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-weight: bold;
+}
+#ui-panel button:hover { background: #0dd; }
+#level-indicator {
+  position: absolute;
+  top: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  color: #0ff;
+  font-size: 20px;
+  font-weight: bold;
+  text-shadow: 0 0 10px #0ff;
+  z-index: 5;
+}
+/* Mobile controls */
+#mobile-controls {
+  position: absolute;
+  bottom: 20px;
+  left: 0; right: 0;
+  display: none;
+  justify-content: center;
+  gap: 16px;
+  z-index: 20;
+}
+.ctrl-btn {
+  width: 80px;
+  height: 80px;
+  border-radius: 50%;
+  background: rgba(0,255,255,0.2);
+  border: 2px solid rgba(0,255,255,0.5);
+  color: #0ff;
+  font-size: 32px;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.ctrl-btn:active { background: rgba(0,255,255,0.5); }
+@media (pointer: coarse) {
+  #mobile-controls { display: flex; }
+}
+</style>
+</head>
+<body>
+
+<canvas id="game"></canvas>
+<div id="level-indicator"></div>
+
+<div id="ui-overlay">
+  <div id="ui-panel">
+    <h1 id="panel-title">Trampoline Bounce</h1>
+    <p id="panel-text">Bounce off walls, dodge lasers, find the hole!</p>
+    <button id="panel-btn" onclick="startGame()">START</button>
+  </div>
+</div>
+
+<div id="mobile-controls">
+  <div class="ctrl-btn" id="btn-left">←</div>
+  <div class="ctrl-btn" id="btn-up">↑</div>
+  <div class="ctrl-btn" id="btn-down">↓</div>
+  <div class="ctrl-btn" id="btn-right">→</div>
+</div>
+
+<script>
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+const overlay = document.getElementById('ui-overlay');
+const panel = document.getElementById('ui-panel');
+const panelTitle = document.getElementById('panel-title');
+const panelText = document.getElementById('panel-text');
+const panelBtn = document.getElementById('panel-btn');
+const levelIndicator = document.getElementById('level-indicator');
+
+// Game constants
+const W = 480;
+const H = 640;
+canvas.width = W;
+canvas.height = H;
+
+// Scale canvas to fit screen
+function resizeCanvas() {
+  const scaleX = window.innerWidth / W;
+  const scaleY = window.innerHeight / H;
+  const scale = Math.min(scaleX, scaleY) * 0.95;
+  canvas.style.width = (W * scale) + 'px';
+  canvas.style.height = (H * scale) + 'px';
+}
+resizeCanvas();
+window.addEventListener('resize', resizeCanvas);
+
+// Input
+const keys = {};
+window.addEventListener('keydown', e => { keys[e.key] = true; e.preventDefault(); });
+window.addEventListener('keyup', e => { keys[e.key] = false; });
+
+// Mobile controls
+['left','right','up','down'].forEach(dir => {
+  const btn = document.getElementById('btn-' + dir);
+  const keyMap = { left: 'ArrowLeft', right: 'ArrowRight', up: 'ArrowUp', down: 'ArrowDown' };
+  btn.addEventListener('touchstart', e => { e.preventDefault(); keys[keyMap[dir]] = true; });
+  btn.addEventListener('touchend', e => { e.preventDefault(); keys[keyMap[dir]] = false; });
+  btn.addEventListener('mousedown', e => { keys[keyMap[dir]] = true; });
+  btn.addEventListener('mouseup', e => { keys[keyMap[dir]] = false; });
+});
+
+// Game state
+let gameState = 'menu'; // menu, playing, levelTransition, gameOver, win
+let currentLevel = 0;
+let player = null;
+let trampolines = [];
+let lasers = [];
+let laserBalls = [];
+let hole = null;
+let levelTimer = 0;
+let transitionTimer = 0;
+let particles = [];
+let shakeTimer = 0;
+let shakeIntensity = 0;
+
+// Level themes
+const themes = [
+  { name: 'Soccer Field', bg: '#1a5c1a', floor: '#2d8a2d', line: '#fff', accent: '#f0f0f0' },
+  { name: 'Baseball Diamond', bg: '#8B6914', floor: '#C4A44A', line: '#fff', accent: '#cc3333' },
+  { name: 'Basketball Court', bg: '#8B4513', floor: '#CD853F', line: '#fff', accent: '#ff6600' },
+];
+
+// Player class
+class Player {
+  constructor(x, y) {
+    this.x = x;
+    this.y = y;
+    this.w = 20;
+    this.h = 20;
+    this.vx = 0;
+    this.vy = 0;
+    this.onTrampoline = false;
+    this.bounceSpeed = 8;
+    this.driftSpeed = 1.2;
+    this.friction = 0.92;
+    this.alive = true;
+    this.invincible = 0;
+  }
+
+  update(dt) {
+    if (!this.alive) return;
+
+    // Input
+    let ix = 0, iy = 0;
+    if (keys['ArrowLeft'] || keys['a'] || keys['A']) ix = -1;
+    if (keys['ArrowRight'] || keys['d'] || keys['D']) ix = 1;
+    if (keys['ArrowUp'] || keys['w'] || keys['W']) iy = -1;
+    if (keys['ArrowDown'] || keys['s'] || keys['S']) iy = 1;
+
+    // Check if touching a trampoline
+    this.onTrampoline = false;
+    for (const t of trampolines) {
+      if (this.touchingTrampoline(t)) {
+        this.onTrampoline = true;
+        // Bounce in input direction
+        if (ix !== 0 || iy !== 0) {
+          this.vx = ix * this.bounceSpeed;
+          this.vy = iy * this.bounceSpeed;
+          // Spawn particles
+          for (let i = 0; i < 5; i++) {
+            particles.push(new Particle(this.x + this.w/2, this.y + this.h/2, '#0ff'));
+          }
+        }
+        break;
+      }
+    }
+
+    // Drift when not on trampoline
+    if (!this.onTrampoline) {
+      if (ix !== 0) this.vx += ix * this.driftSpeed * 0.3;
+      if (iy !== 0) this.vy += iy * this.driftSpeed * 0.3;
+    }
+
+    // Apply friction
+    this.vx *= this.friction;
+    this.vy *= this.friction;
+
+    // Move
+    this.x += this.vx;
+    this.y += this.vy;
+
+    // Wall collision
+    const wallThick = 12;
+    if (this.x < wallThick) { this.x = wallThick; this.vx = Math.abs(this.vx) * 0.5; }
+    if (this.x + this.w > W - wallThick) { this.x = W - wallThick - this.w; this.vx = -Math.abs(this.vx) * 0.5; }
+    if (this.y < wallThick) { this.y = wallThick; this.vy = Math.abs(this.vy) * 0.5; }
+    if (this.y + this.h > H - wallThick) { this.y = H - wallThick - this.h; this.vy = -Math.abs(this.vy) * 0.5; }
+
+    // Invincibility timer
+    if (this.invincible > 0) this.invincible -= dt;
+  }
+
+  touchingTrampoline(t) {
+    const expand = 4;
+    if (t.side === 'left') {
+      return this.x <= t.x + t.thickness + expand &&
+             this.y + this.h > t.y && this.y < t.y + t.length;
+    } else if (t.side === 'right') {
+      return this.x + this.w >= t.x - expand &&
+             this.y + this.h > t.y && this.y < t.y + t.length;
+    } else if (t.side === 'top') {
+      return this.y <= t.y + t.thickness + expand &&
+             this.x + this.w > t.x && this.x < t.x + t.length;
+    } else if (t.side === 'bottom') {
+      return this.y + this.h >= t.y - expand &&
+             this.x + this.w > t.x && this.x < t.x + t.length;
+    }
+    return false;
+  }
+
+  draw() {
+    if (!this.alive) return;
+    // Blink when invincible
+    if (this.invincible > 0 && Math.floor(this.invincible * 10) % 2 === 0) return;
+
+    const cx = this.x + this.w / 2;
+    const cy = this.y + this.h / 2;
+
+    // Body (blue shirt)
+    ctx.fillStyle = '#2196F3';
+    ctx.fillRect(this.x + 2, this.y + 6, this.w - 4, this.h - 6);
+
+    // Head
+    ctx.fillStyle = '#FFD599';
+    ctx.beginPath();
+    ctx.arc(cx, this.y + 5, 6, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Eyes
+    ctx.fillStyle = '#333';
+    ctx.fillRect(cx - 3, this.y + 3, 2, 2);
+    ctx.fillRect(cx + 1, this.y + 3, 2, 2);
+  }
+
+  getRect() {
+    return { x: this.x, y: this.y, w: this.w, h: this.h };
+  }
+}
+
+// Trampoline class
+class Trampoline {
+  constructor(side, pos, length) {
+    this.side = side; // left, right, top, bottom
+    this.length = length || 60;
+    this.thickness = 8;
+    this.bounceAnim = 0;
+
+    const wallThick = 12;
+    if (side === 'left') {
+      this.x = wallThick - this.thickness;
+      this.y = pos;
+    } else if (side === 'right') {
+      this.x = W - wallThick;
+      this.y = pos;
+    } else if (side === 'top') {
+      this.x = pos;
+      this.y = wallThick - this.thickness;
+    } else if (side === 'bottom') {
+      this.x = pos;
+      this.y = H - wallThick;
+    }
+  }
+
+  draw() {
+    ctx.save();
+    const glow = Math.sin(Date.now() * 0.003) * 0.3 + 0.7;
+    ctx.globalAlpha = glow;
+
+    if (this.side === 'left' || this.side === 'right') {
+      // Vertical trampoline
+      ctx.fillStyle = '#ff6b35';
+      ctx.fillRect(this.x, this.y, this.thickness, this.length);
+      // Stripes
+      ctx.fillStyle = '#ffaa00';
+      for (let i = 0; i < this.length; i += 12) {
+        ctx.fillRect(this.x, this.y + i, this.thickness, 4);
+      }
+    } else {
+      // Horizontal trampoline
+      ctx.fillStyle = '#ff6b35';
+      ctx.fillRect(this.x, this.y, this.length, this.thickness);
+      // Stripes
+      ctx.fillStyle = '#ffaa00';
+      for (let i = 0; i < this.length; i += 12) {
+        ctx.fillRect(this.x + i, this.y, 4, this.thickness);
+      }
+    }
+    ctx.restore();
+  }
+}
+
+// Laser class
+class Laser {
+  constructor(x1, y1, x2, y2, thickness, moving) {
+    this.x1 = x1; this.y1 = y1;
+    this.x2 = x2; this.y2 = y2;
+    this.thickness = thickness || 3;
+    this.moving = moving || null; // { axis: 'y', speed: 1, min: 100, max: 400 }
+    this.phase = Math.random() * Math.PI * 2;
+  }
+
+  update(dt) {
+    if (this.moving) {
+      const spd = this.moving.speed;
+      if (this.moving.axis === 'y') {
+        this.y1 += spd;
+        this.y2 += spd;
+        if (this.y1 > this.moving.max || this.y1 < this.moving.min) {
+          this.moving.speed = -spd;
+        }
+      } else if (this.moving.axis === 'x') {
+        this.x1 += spd;
+        this.x2 += spd;
+        if (this.x1 > this.moving.max || this.x1 < this.moving.min) {
+          this.moving.speed = -spd;
+        }
+      }
+    }
+  }
+
+  draw() {
+    const pulse = Math.sin(Date.now() * 0.01 + this.phase) * 0.3 + 0.7;
+
+    // Glow
+    ctx.save();
+    ctx.strokeStyle = `rgba(255, 0, 0, ${pulse * 0.3})`;
+    ctx.lineWidth = this.thickness + 8;
+    ctx.beginPath();
+    ctx.moveTo(this.x1, this.y1);
+    ctx.lineTo(this.x2, this.y2);
+    ctx.stroke();
+
+    // Core
+    ctx.strokeStyle = `rgba(255, 50, 50, ${pulse})`;
+    ctx.lineWidth = this.thickness;
+    ctx.beginPath();
+    ctx.moveTo(this.x1, this.y1);
+    ctx.lineTo(this.x2, this.y2);
+    ctx.stroke();
+
+    // Bright center
+    ctx.strokeStyle = `rgba(255, 200, 200, ${pulse})`;
+    ctx.lineWidth = Math.max(1, this.thickness - 2);
+    ctx.beginPath();
+    ctx.moveTo(this.x1, this.y1);
+    ctx.lineTo(this.x2, this.y2);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  checkCollision(rect) {
+    // Line-rectangle collision
+    return lineRectCollision(this.x1, this.y1, this.x2, this.y2, rect.x, rect.y, rect.w, rect.h, this.thickness);
+  }
+}
+
+// Laser Ball class
+class LaserBall {
+  constructor(x, y, vx, vy, radius) {
+    this.x = x; this.y = y;
+    this.vx = vx; this.vy = vy;
+    this.radius = radius || 10;
+    this.trail = [];
+  }
+
+  update(dt) {
+    this.trail.push({ x: this.x, y: this.y });
+    if (this.trail.length > 10) this.trail.shift();
+
+    this.x += this.vx;
+    this.y += this.vy;
+
+    // Bounce off walls
+    const wallThick = 12;
+    if (this.x - this.radius < wallThick) { this.x = wallThick + this.radius; this.vx = Math.abs(this.vx); }
+    if (this.x + this.radius > W - wallThick) { this.x = W - wallThick - this.radius; this.vx = -Math.abs(this.vx); }
+    if (this.y - this.radius < wallThick) { this.y = wallThick + this.radius; this.vy = Math.abs(this.vy); }
+    if (this.y + this.radius > H - wallThick) { this.y = H - wallThick - this.radius; this.vy = -Math.abs(this.vy); }
+  }
+
+  draw() {
+    // Trail
+    for (let i = 0; i < this.trail.length; i++) {
+      const a = i / this.trail.length * 0.3;
+      ctx.fillStyle = `rgba(255, 0, 0, ${a})`;
+      ctx.beginPath();
+      ctx.arc(this.trail[i].x, this.trail[i].y, this.radius * (i / this.trail.length), 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // Ball
+    const pulse = Math.sin(Date.now() * 0.01) * 0.2 + 0.8;
+    const grad = ctx.createRadialGradient(this.x, this.y, 0, this.x, this.y, this.radius);
+    grad.addColorStop(0, `rgba(255, 200, 200, ${pulse})`);
+    grad.addColorStop(0.5, `rgba(255, 50, 50, ${pulse})`);
+    grad.addColorStop(1, `rgba(200, 0, 0, ${pulse * 0.5})`);
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Glow
+    ctx.shadowColor = '#ff0000';
+    ctx.shadowBlur = 15;
+    ctx.beginPath();
+    ctx.arc(this.x, this.y, this.radius * 0.5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.shadowBlur = 0;
+  }
+
+  checkCollision(rect) {
+    const cx = Math.max(rect.x, Math.min(this.x, rect.x + rect.w));
+    const cy = Math.max(rect.y, Math.min(this.y, rect.y + rect.h));
+    const dx = this.x - cx;
+    const dy = this.y - cy;
+    return (dx * dx + dy * dy) < (this.radius * this.radius);
+  }
+}
+
+// Hole class
+class Hole {
+  constructor(x, y, radius) {
+    this.x = x;
+    this.y = y;
+    this.radius = radius || 22;
+    this.pulsePhase = 0;
+  }
+
+  draw() {
+    this.pulsePhase += 0.05;
+    const pulse = Math.sin(this.pulsePhase) * 3;
+
+    // Outer ring
+    ctx.strokeStyle = '#0ff';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(this.x, this.y, this.radius + pulse + 5, 0, Math.PI * 2);
+    ctx.stroke();
+
+    // Dark hole
+    const grad = ctx.createRadialGradient(this.x, this.y, 0, this.x, this.y, this.radius);
+    grad.addColorStop(0, '#000');
+    grad.addColorStop(0.7, '#111');
+    grad.addColorStop(1, '#333');
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Arrow indicator
+    ctx.fillStyle = `rgba(0, 255, 255, ${Math.sin(this.pulsePhase * 2) * 0.5 + 0.5})`;
+    ctx.font = '16px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('▼', this.x, this.y + 5);
+  }
+
+  checkCollision(rect) {
+    const cx = rect.x + rect.w / 2;
+    const cy = rect.y + rect.h / 2;
+    const dx = cx - this.x;
+    const dy = cy - this.y;
+    return Math.sqrt(dx * dx + dy * dy) < this.radius;
+  }
+}
+
+// Particle
+class Particle {
+  constructor(x, y, color) {
+    this.x = x; this.y = y;
+    this.vx = (Math.random() - 0.5) * 6;
+    this.vy = (Math.random() - 0.5) * 6;
+    this.life = 1;
+    this.color = color || '#0ff';
+    this.size = Math.random() * 3 + 1;
+  }
+  update(dt) {
+    this.x += this.vx;
+    this.y += this.vy;
+    this.life -= 0.03;
+  }
+  draw() {
+    ctx.globalAlpha = this.life;
+    ctx.fillStyle = this.color;
+    ctx.fillRect(this.x, this.y, this.size, this.size);
+    ctx.globalAlpha = 1;
+  }
+}
+
+// Utility: line-rect collision
+function lineRectCollision(x1, y1, x2, y2, rx, ry, rw, rh, thickness) {
+  const half = thickness / 2;
+  // Expand rect by line thickness
+  const ex = rx - half;
+  const ey = ry - half;
+  const ew = rw + thickness;
+  const eh = rh + thickness;
+
+  // Check if line segment intersects expanded rect
+  return lineRectIntersect(x1, y1, x2, y2, ex, ey, ew, eh);
+}
+
+function lineRectIntersect(x1, y1, x2, y2, rx, ry, rw, rh) {
+  // Check if either endpoint is inside rect
+  if (pointInRect(x1, y1, rx, ry, rw, rh) || pointInRect(x2, y2, rx, ry, rw, rh)) return true;
+
+  // Check line against each edge
+  if (lineLineIntersect(x1, y1, x2, y2, rx, ry, rx + rw, ry)) return true;
+  if (lineLineIntersect(x1, y1, x2, y2, rx + rw, ry, rx + rw, ry + rh)) return true;
+  if (lineLineIntersect(x1, y1, x2, y2, rx, ry + rh, rx + rw, ry + rh)) return true;
+  if (lineLineIntersect(x1, y1, x2, y2, rx, ry, rx, ry + rh)) return true;
+
+  return false;
+}
+
+function pointInRect(px, py, rx, ry, rw, rh) {
+  return px >= rx && px <= rx + rw && py >= ry && py <= ry + rh;
+}
+
+function lineLineIntersect(x1, y1, x2, y2, x3, y3, x4, y4) {
+  const den = (x1 - x2) * (y3 - y4) - (y1 - y2) * (x3 - x4);
+  if (den === 0) return false;
+  const t = ((x1 - x3) * (y3 - y4) - (y1 - y3) * (x3 - x4)) / den;
+  const u = -((x1 - x2) * (y1 - y3) - (y1 - y2) * (x1 - x3)) / den;
+  return t >= 0 && t <= 1 && u >= 0 && u <= 1;
+}
+
+// Level definitions
+function loadLevel(n) {
+  trampolines = [];
+  lasers = [];
+  laserBalls = [];
+  particles = [];
+
+  const wallThick = 12;
+
+  if (n === 0) {
+    // Level 1: Soccer Field — Basic trampolines + simple lasers
+    player = new Player(W / 2 - 10, H - 60);
+
+    // Trampolines on walls
+    trampolines.push(new Trampoline('left', 100, 70));
+    trampolines.push(new Trampoline('right', 200, 70));
+    trampolines.push(new Trampoline('left', 350, 70));
+    trampolines.push(new Trampoline('right', 450, 70));
+    trampolines.push(new Trampoline('top', 150, 70));
+    trampolines.push(new Trampoline('top', 300, 70));
+
+    // Simple horizontal lasers
+    lasers.push(new Laser(wallThick, 180, W - wallThick, 180, 3));
+    lasers.push(new Laser(wallThick, 380, W / 2 - 40, 380, 3));
+    lasers.push(new Laser(W / 2 + 40, 380, W - wallThick, 380, 3));
+
+    // Hole near top
+    hole = new Hole(W / 2, 60, 22);
+
+  } else if (n === 1) {
+    // Level 2: Baseball Diamond — Laser balls + thicker lasers
+    player = new Player(W / 2 - 10, H - 60);
+
+    trampolines.push(new Trampoline('left', 80, 60));
+    trampolines.push(new Trampoline('right', 80, 60));
+    trampolines.push(new Trampoline('left', 250, 60));
+    trampolines.push(new Trampoline('right', 250, 60));
+    trampolines.push(new Trampoline('left', 420, 60));
+    trampolines.push(new Trampoline('right', 420, 60));
+    trampolines.push(new Trampoline('top', 100, 60));
+    trampolines.push(new Trampoline('top', 340, 60));
+    trampolines.push(new Trampoline('bottom', 200, 60));
+
+    // Thicker lasers
+    lasers.push(new Laser(wallThick, 160, W - wallThick, 160, 5));
+    lasers.push(new Laser(wallThick, 330, W / 2 - 30, 330, 5));
+    lasers.push(new Laser(W / 2 + 30, 330, W - wallThick, 330, 5));
+    lasers.push(new Laser(W / 2, wallThick, W / 2, 130, 4));
+
+    // Laser balls
+    laserBalls.push(new LaserBall(100, 200, 1.5, 1, 10));
+    laserBalls.push(new LaserBall(350, 400, -1, 1.5, 10));
+
+    hole = new Hole(W / 2, 60, 20);
+
+  } else if (n === 2) {
+    // Level 3: Basketball Court — Moving laser wall + timing challenge
+    player = new Player(W / 2 - 10, H - 60);
+
+    trampolines.push(new Trampoline('left', 60, 80));
+    trampolines.push(new Trampoline('right', 60, 80));
+    trampolines.push(new Trampoline('left', 200, 60));
+    trampolines.push(new Trampoline('right', 200, 60));
+    trampolines.push(new Trampoline('left', 350, 60));
+    trampolines.push(new Trampoline('right', 350, 60));
+    trampolines.push(new Trampoline('left', 500, 60));
+    trampolines.push(new Trampoline('right', 500, 60));
+    trampolines.push(new Trampoline('top', 60, 60));
+    trampolines.push(new Trampoline('top', 200, 60));
+    trampolines.push(new Trampoline('top', 360, 60));
+    trampolines.push(new Trampoline('bottom', 150, 60));
+    trampolines.push(new Trampoline('bottom', 300, 60));
+
+    // Fixed lasers
+    lasers.push(new Laser(wallThick, 150, W / 2 - 40, 150, 4));
+    lasers.push(new Laser(W / 2 + 40, 150, W - wallThick, 150, 4));
+
+    // MOVING LASER WALL — moves up and down, need to time going through
+    lasers.push(new Laser(wallThick, 350, W / 2 - 30, 350, 6, { axis: 'y', speed: 1.2, min: 250, max: 500 }));
+    lasers.push(new Laser(W / 2 + 30, 350, W - wallThick, 350, 6, { axis: 'y', speed: 1.2, min: 250, max: 500 }));
+
+    // Thick static laser
+    lasers.push(new Laser(W / 2, 200, W / 2, 320, 6));
+
+    // Laser balls
+    laserBalls.push(new LaserBall(80, 280, 2, 0.5, 12));
+    laserBalls.push(new LaserBall(400, 450, -1.5, -1, 12));
+    laserBalls.push(new LaserBall(240, 100, 1, 1.5, 8));
+
+    hole = new Hole(W / 2, 55, 20);
+  }
+}
+
+// Draw themed background
+function drawBackground(theme) {
+  // Main floor
+  ctx.fillStyle = theme.bg;
+  ctx.fillRect(0, 0, W, H);
+
+  // Field pattern
+  ctx.fillStyle = theme.floor;
+  ctx.globalAlpha = 0.3;
+
+  if (currentLevel === 0) {
+    // Soccer: center circle + lines
+    ctx.strokeStyle = theme.line;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.arc(W / 2, H / 2, 60, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(12, H / 2);
+    ctx.lineTo(W - 12, H / 2);
+    ctx.stroke();
+    // Goal boxes
+    ctx.strokeRect(W / 2 - 60, 12, 120, 50);
+    ctx.strokeRect(W / 2 - 60, H - 62, 120, 50);
+  } else if (currentLevel === 1) {
+    // Baseball: diamond
+    ctx.strokeStyle = theme.line;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(W / 2, H / 2 - 80);
+    ctx.lineTo(W / 2 + 80, H / 2);
+    ctx.lineTo(W / 2, H / 2 + 80);
+    ctx.lineTo(W / 2 - 80, H / 2);
+    ctx.closePath();
+    ctx.stroke();
+  } else if (currentLevel === 2) {
+    // Basketball: court lines
+    ctx.strokeStyle = theme.line;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.arc(W / 2, H / 2, 50, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.strokeRect(W / 2 - 80, 12, 160, 80);
+    ctx.strokeRect(W / 2 - 80, H - 92, 160, 80);
+    // Free throw arcs
+    ctx.beginPath();
+    ctx.arc(W / 2, 92, 50, 0, Math.PI);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(W / 2, H - 92, 50, Math.PI, Math.PI * 2);
+    ctx.stroke();
+  }
+
+  ctx.globalAlpha = 1;
+
+  // Walls
+  ctx.fillStyle = '#444';
+  ctx.fillRect(0, 0, W, 12);      // top
+  ctx.fillRect(0, H - 12, W, 12); // bottom
+  ctx.fillRect(0, 0, 12, H);      // left
+  ctx.fillRect(W - 12, 0, 12, H); // right
+
+  // Wall border
+  ctx.strokeStyle = '#666';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(12, 12, W - 24, H - 24);
+}
+
+// Main game loop
+let lastTime = 0;
+function gameLoop(timestamp) {
+  const dt = Math.min((timestamp - lastTime) / 16.67, 3);
+  lastTime = timestamp;
+
+  if (gameState === 'playing') {
+    update(dt);
+  }
+
+  draw();
+  requestAnimationFrame(gameLoop);
+}
+
+function update(dt) {
+  levelTimer += dt;
+
+  player.update(dt);
+
+  // Update lasers
+  for (const l of lasers) l.update(dt);
+
+  // Update laser balls
+  for (const b of laserBalls) b.update(dt);
+
+  // Update particles
+  for (let i = particles.length - 1; i >= 0; i--) {
+    particles[i].update(dt);
+    if (particles[i].life <= 0) particles.splice(i, 1);
+  }
+
+  // Check laser collision
+  if (player.alive && player.invincible <= 0) {
+    const rect = player.getRect();
+    for (const l of lasers) {
+      if (l.checkCollision(rect)) {
+        playerHit();
+        break;
+      }
+    }
+    for (const b of laserBalls) {
+      if (b.checkCollision(rect)) {
+        playerHit();
+        break;
+      }
+    }
+  }
+
+  // Check hole
+  if (player.alive && hole) {
+    if (hole.checkCollision(player.getRect())) {
+      nextLevel();
+    }
+  }
+
+  // Screen shake
+  if (shakeTimer > 0) shakeTimer -= dt;
+}
+
+function playerHit() {
+  player.alive = false;
+  shakeTimer = 15;
+  shakeIntensity = 8;
+
+  // Death particles
+  for (let i = 0; i < 20; i++) {
+    particles.push(new Particle(player.x + player.w/2, player.y + player.h/2, '#ff0000'));
+  }
+
+  // Show retry after delay
+  setTimeout(() => {
+    showPanel('Zapped! ⚡', `Level ${currentLevel + 1} - ${themes[currentLevel].name}`, 'RETRY', () => {
+      loadLevel(currentLevel);
+      gameState = 'playing';
+      hidePanel();
+    });
+  }, 800);
+}
+
+function nextLevel() {
+  currentLevel++;
+  if (currentLevel >= 3) {
+    // Win!
+    gameState = 'win';
+    showPanel('🏆 You Win!', 'You escaped all 3 floors!', 'PLAY AGAIN', () => {
+      currentLevel = 0;
+      startGame();
+    });
+  } else {
+    // Level transition
+    gameState = 'levelTransition';
+    // Falling animation
+    for (let i = 0; i < 15; i++) {
+      particles.push(new Particle(player.x + player.w/2, player.y + player.h/2, '#0ff'));
+    }
+    setTimeout(() => {
+      loadLevel(currentLevel);
+      gameState = 'playing';
+      levelIndicator.textContent = `Level ${currentLevel + 1} — ${themes[currentLevel].name}`;
+    }, 600);
+  }
+}
+
+function draw() {
+  ctx.save();
+
+  // Screen shake
+  if (shakeTimer > 0) {
+    const sx = (Math.random() - 0.5) * shakeIntensity * (shakeTimer / 15);
+    const sy = (Math.random() - 0.5) * shakeIntensity * (shakeTimer / 15);
+    ctx.translate(sx, sy);
+  }
+
+  // Background
+  const theme = themes[Math.min(currentLevel, themes.length - 1)];
+  drawBackground(theme);
+
+  if (gameState === 'playing' || gameState === 'levelTransition') {
+    // Draw trampolines
+    for (const t of trampolines) t.draw();
+
+    // Draw hole
+    if (hole) hole.draw();
+
+    // Draw lasers
+    for (const l of lasers) l.draw();
+
+    // Draw laser balls
+    for (const b of laserBalls) b.draw();
+
+    // Draw player
+    player.draw();
+
+    // Draw particles
+    for (const p of particles) p.draw();
+  }
+
+  ctx.restore();
+}
+
+function showPanel(title, text, btnText, callback) {
+  panelTitle.textContent = title;
+  panelText.textContent = text;
+  panelBtn.textContent = btnText;
+  panelBtn.onclick = callback;
+  panel.style.display = 'block';
+  overlay.classList.add('active');
+}
+
+function hidePanel() {
+  panel.style.display = 'none';
+  overlay.classList.remove('active');
+}
+
+function startGame() {
+  currentLevel = 0;
+  levelTimer = 0;
+  loadLevel(currentLevel);
+  gameState = 'playing';
+  levelIndicator.textContent = `Level 1 — ${themes[0].name}`;
+  hidePanel();
+}
+
+// Init
+showPanel('Trampoline Bounce', 'Bounce off walls, dodge lasers, find the hole!', 'START', startGame);
+requestAnimationFrame(gameLoop);
+</script>
+</body>
+</html>
