@@ -591,26 +591,36 @@ function loadLevel(n) {
 
   if (n === 0) {
     // Level 1: Soccer Field — Basic trampolines + simple lasers
+    // ALL lasers have gaps the player can pass through!
     player = new Player(W / 2 - 10, H - 60);
 
-    // Trampolines on walls
+    // Trampolines on walls — enough to navigate upward
     trampolines.push(new Trampoline('left', 100, 70));
-    trampolines.push(new Trampoline('right', 200, 70));
-    trampolines.push(new Trampoline('left', 350, 70));
-    trampolines.push(new Trampoline('right', 450, 70));
+    trampolines.push(new Trampoline('right', 100, 70));
+    trampolines.push(new Trampoline('left', 300, 70));
+    trampolines.push(new Trampoline('right', 300, 70));
+    trampolines.push(new Trampoline('left', 480, 70));
+    trampolines.push(new Trampoline('right', 480, 70));
     trampolines.push(new Trampoline('top', 150, 70));
     trampolines.push(new Trampoline('top', 300, 70));
 
-    // Simple horizontal lasers
-    lasers.push(new Laser(wallThick, 180, W - wallThick, 180, 3));
-    lasers.push(new Laser(wallThick, 380, W / 2 - 40, 380, 3));
-    lasers.push(new Laser(W / 2 + 40, 380, W - wallThick, 380, 3));
+    // Laser with wide gap (easy) — gap at center ~80px
+    lasers.push(new Laser(wallThick, 420, W / 2 - 40, 420, 3));
+    lasers.push(new Laser(W / 2 + 40, 420, W - wallThick, 420, 3));
+
+    // Laser with gap offset to the right ~60px
+    lasers.push(new Laser(wallThick, 250, W / 2 + 60, 250, 3));
+    lasers.push(new Laser(W / 2 + 120, 250, W - wallThick, 250, 3));
+
+    // Laser with gap offset to the left ~60px
+    lasers.push(new Laser(wallThick, 130, W / 2 - 100, 130, 3));
+    lasers.push(new Laser(W / 2 - 40, 130, W - wallThick, 130, 3));
 
     // Hole near top
-    hole = new Hole(W / 2, 60, 22);
+    hole = new Hole(W / 2, 55, 24);
 
   } else if (n === 1) {
-    // Level 2: Baseball Diamond — Laser balls + thicker lasers
+    // Level 2: Baseball Diamond — Laser balls + thicker lasers (all have gaps!)
     player = new Player(W / 2 - 10, H - 60);
 
     trampolines.push(new Trampoline('left', 80, 60));
@@ -619,21 +629,29 @@ function loadLevel(n) {
     trampolines.push(new Trampoline('right', 250, 60));
     trampolines.push(new Trampoline('left', 420, 60));
     trampolines.push(new Trampoline('right', 420, 60));
-    trampolines.push(new Trampoline('top', 100, 60));
-    trampolines.push(new Trampoline('top', 340, 60));
+    trampolines.push(new Trampoline('top', 80, 60));
+    trampolines.push(new Trampoline('top', 250, 60));
+    trampolines.push(new Trampoline('top', 380, 60));
     trampolines.push(new Trampoline('bottom', 200, 60));
 
-    // Thicker lasers
-    lasers.push(new Laser(wallThick, 160, W - wallThick, 160, 5));
-    lasers.push(new Laser(wallThick, 330, W / 2 - 30, 330, 5));
-    lasers.push(new Laser(W / 2 + 30, 330, W - wallThick, 330, 5));
+    // Thick lasers — all with gaps (~50px)
+    lasers.push(new Laser(wallThick, 430, W / 2 - 25, 430, 5));
+    lasers.push(new Laser(W / 2 + 25, 430, W - wallThick, 430, 5));
+
+    lasers.push(new Laser(wallThick, 300, 160, 300, 5));
+    lasers.push(new Laser(210, 300, W - wallThick, 300, 5));
+
+    lasers.push(new Laser(wallThick, 170, W / 2 + 40, 170, 5));
+    lasers.push(new Laser(W / 2 + 90, 170, W - wallThick, 170, 5));
+
+    // Vertical laser with gap
     lasers.push(new Laser(W / 2, wallThick, W / 2, 130, 4));
 
-    // Laser balls
-    laserBalls.push(new LaserBall(100, 200, 1.5, 1, 10));
-    laserBalls.push(new LaserBall(350, 400, -1, 1.5, 10));
+    // Laser balls — moving threats
+    laserBalls.push(new LaserBall(100, 250, 1.5, 0.8, 10));
+    laserBalls.push(new LaserBall(380, 380, -1.2, 1.2, 10));
 
-    hole = new Hole(W / 2, 60, 20);
+    hole = new Hole(W / 2, 55, 20);
 
   } else if (n === 2) {
     // Level 3: Basketball Court — Moving laser wall + timing challenge
@@ -653,21 +671,18 @@ function loadLevel(n) {
     trampolines.push(new Trampoline('bottom', 150, 60));
     trampolines.push(new Trampoline('bottom', 300, 60));
 
-    // Fixed lasers
-    lasers.push(new Laser(wallThick, 150, W / 2 - 40, 150, 4));
-    lasers.push(new Laser(W / 2 + 40, 150, W - wallThick, 150, 4));
+    // Fixed laser with gap
+    lasers.push(new Laser(wallThick, 150, W / 2 - 30, 150, 4));
+    lasers.push(new Laser(W / 2 + 30, 150, W - wallThick, 150, 4));
 
-    // MOVING LASER WALL — moves up and down, need to time going through
-    lasers.push(new Laser(wallThick, 350, W / 2 - 30, 350, 6, { axis: 'y', speed: 1.2, min: 250, max: 500 }));
-    lasers.push(new Laser(W / 2 + 30, 350, W - wallThick, 350, 6, { axis: 'y', speed: 1.2, min: 250, max: 500 }));
-
-    // Thick static laser
-    lasers.push(new Laser(W / 2, 200, W / 2, 320, 6));
+    // MOVING LASER WALL — moves up and down
+    // Has a gap in the middle that you must time your passage through
+    lasers.push(new Laser(wallThick, 350, W / 2 - 35, 350, 6, { axis: 'y', speed: 1.0, min: 250, max: 500 }));
+    lasers.push(new Laser(W / 2 + 35, 350, W - wallThick, 350, 6, { axis: 'y', speed: 1.0, min: 250, max: 500 }));
 
     // Laser balls
-    laserBalls.push(new LaserBall(80, 280, 2, 0.5, 12));
-    laserBalls.push(new LaserBall(400, 450, -1.5, -1, 12));
-    laserBalls.push(new LaserBall(240, 100, 1, 1.5, 8));
+    laserBalls.push(new LaserBall(80, 280, 1.8, 0.5, 12));
+    laserBalls.push(new LaserBall(400, 450, -1.5, -1, 10));
 
     hole = new Hole(W / 2, 55, 20);
   }
